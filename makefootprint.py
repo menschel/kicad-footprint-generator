@@ -276,7 +276,7 @@ class kicad_footprint:
     
     
     
-def make_footprint_stmicro(N,E,X2,Y2,C,X,Y,V,EV,modulename,description,datasheet):
+def make_footprint_stmicro(N,E,X2,Y2,C,X,Y,V,EV,modulename,description,datasheet,centerpad,numthermalvias):
     """ make a kicad footprint from a st micro footprint description
         @param N: number of terminals(pads) in this footprint
         @param E: contact pitch
@@ -294,38 +294,38 @@ def make_footprint_stmicro(N,E,X2,Y2,C,X,Y,V,EV,modulename,description,datasheet
         
     """
     pads = []
-#     for padnum,xypos in enumerate(get_posxy_for_span(pinnum=pinnum,spanx=E,spany=C)):
-#         pads.append(footprint_pad(padnum+1, xypos=xypos, sizexy=(X,Y), padtype="smd", padshape="oval",layers = ["F.Cu","F.Paste","F.Mask"]))
-
-    #one problem occurs kicad uses portrait and st micro uses landscape format, so swap x and y
-    for padnum,xypos in enumerate(get_posxy_for_span(pinnum=N,spanx=E,spany=C)):#swapped C and E and back again as it was right        
+    thermalvia_pads = []
+    paste_pads = []    
+    for padnum,xypos in enumerate(get_posxy_for_span(pinnum=N,spanx=E,spany=C)):        
         pads.append(footprint_pad(padnum+1,
-                                  xypos=(xypos[1],xypos[0]),#swapped dims
-                                  sizexy=(Y,X),#swapped X and Y
+                                  xypos=(xypos[1],xypos[0]),
+                                  sizexy=(Y,X),
                                   padtype="smd", padshape="oval",layers = ["F.Cu","F.Paste","F.Mask"]))
-    if X2 != None and Y2 != None:
-        #center pad - position (0,0) size X,Y
-        #print("center pad")
-        centerpad = footprint_pad(N+1,
-                                  xypos=(0,0),
-                                  sizexy=(Y2,X2),
-                                  padtype="smd", padshape="rect",layers = ["F.Cu","F.Mask"])
-        pads.append(centerpad)
-    if V != None and EV != None:
-        vianum = 4 #TODO either calculate or set the number of thermal vias
-        #thermal vias
-        thermalvias = []
-        for padnum,xypos in enumerate(get_posxy_for_span(pinnum=4,spanx=EV,spany=EV)):#TODO: how do we know the Number of thermalvias from spec sheet variables? 
-            #now make the thermal vias
-            thermalvias.append(footprint_pad(N+1,
-                        xypos=(xypos[1],xypos[0]),#swapped dims,
-                        sizexy=(Y2,X2),
-                        padtype="thru_hole", padshape="circle",layers=["*.Cu","*.Mask"],drill=V))#change this to partly paste later
- 
-            #(pad 15 thru_hole circle (at 0.5 0.5) (size 0.65 0.65) (drill 0.3) (layers *.Cu *.Mask))
-        pads.extend(thermalvias)
-    paste_pads = []
-    if thermalvias:
+    if centerpad and X2 and Y2:
+        ep = footprint_pad(N+1,
+                           xypos=(0,0),
+                           sizexy=(Y2,X2),
+                           padtype="smd", padshape="rect",layers = ["F.Cu","F.Mask"])
+        pads.append(ep)
+
+    if numthermalvias and V and EV:
+        #TODO: either calculate the number of thermal vias
+        for padnum,xypos in enumerate(get_posxy_for_span(pinnum=numthermalvias,spanx=EV,spany=EV)):#TODO: how do we know the Number of thermalvias from spec sheet variables? 
+            
+            #add the thermal via
+            diameter = min(Y2-EV,X2-EV)
+            thermalvia_pads.append(footprint_pad(N+1,
+                        xypos=(xypos[1],xypos[0]),
+                        sizexy=(diameter,)*2,
+                        padtype="thru_hole", padshape="circle",layers=["*.Cu","*.Mask"],drill=V))
+            
+            #add the thermal pad to the back
+            thermalvia_pads.append(footprint_pad(N+1,
+                        xypos=(xypos[1],xypos[0]),
+                        sizexy=(diameter,)*2,
+                        padtype="smd", padshape="rect",layers = ["B.Cu","B.Mask"]))#TODO: does this need to be rectangle?!
+        
+        
         #shape the paste fields on the center pad around the thermalvias
         #we're forming a cross
         #1.calc a rect between all vias
@@ -334,16 +334,16 @@ def make_footprint_stmicro(N,E,X2,Y2,C,X,Y,V,EV,modulename,description,datasheet
         paste_pads.append(footprint_pad(
                           None,#No pad number
                           xypos=(0,0),
-                          sizexy=(Y2,X2-(2*V)),
+                          sizexy=(Y2,EV-diameter),
                           padtype="smd",
                           padshape="rect",
                           layers = ["F.Paste",]))
         #add the other pads
-        for padnum,xypos in enumerate(get_posxy_for_span(pinnum=vianum/2,spanx=EV,spany=EV)):
+        for padnum,xypos in enumerate(get_posxy_for_span(pinnum=numthermalvias/2,spanx=EV,spany=EV)):#TODO Check with higher pin count!
             paste_pads.append(footprint_pad(
                               None,#No pad number
                               xypos=xypos,#position is in between the vias
-                              sizexy=(2*V,EV-(2*V)),
+                              sizexy=(EV-diameter,X2-EV),
                               padtype="smd",
                               padshape="rect",
                               layers = ["F.Paste",]))
@@ -352,6 +352,7 @@ def make_footprint_stmicro(N,E,X2,Y2,C,X,Y,V,EV,modulename,description,datasheet
     else:
         pass
         #shape the paste fields on the center pad
+    pads.extend(thermalvia_pads)
     pads.extend(paste_pads)    
     
     fp_obj = kicad_footprint(name=modulename,desc=description,datasheet=datasheet,pads=pads,tags=["VDFN","DFN","0.65mm"],
@@ -372,8 +373,10 @@ if __name__ == "__main__":
                                        modulename="TDFN-8-1EP_3x2mm_Pitch0.5mm_EP1.80x1.65mm",
                                        description="8-lead plastic dual flat, 2x3x0.75mm size, 0.5mm pitch",
                                        datasheet="http://ww1.microchip.com/downloads/en/DeviceDoc/8L_TDFN_2x3_MN_C04-0129E-MN.pdf",
+                                       centerpad=True,
+                                       numthermalvias=4,
                                        )
-    with open("TDFN-8-1EP_3x2mm_Pitch0.5mm_EP1.80x1.65mm.kicad_mod","w") as f:
+    with open("TDFN-8-1EP_3x2mm_Pitch0.5mm_EP1.80x1.65mm_ThermalVias.kicad_mod","w") as f:
         f.write(footprint)
 
 
