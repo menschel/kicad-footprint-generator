@@ -42,7 +42,7 @@ def get_center_dimensions_of_pads(pads):
         maxxy = list(max(maxxy[i],padxypos[i]) for i in range(2))
     return minxy,maxxy
 
-def format_courtyard_lines(pads,distance_to_pads=0.25,linewidth=0.05):
+def format_courtyard_lines(pads,distance_to_pads=0.25,linewidth=0.05,package_dimensions=(10,10)):
     points = []
     courtyard_lines = []
     minxy,maxxy = get_outer_dimensions_of_pads(pads)
@@ -57,7 +57,7 @@ def format_courtyard_lines(pads,distance_to_pads=0.25,linewidth=0.05):
                 thisy = y-distance_to_pads
             else:
                 thisy = y+distance_to_pads
-            points.append((thisx,thisy))
+            points.append([thisx,thisy])
     #we have to swap points for this to draw correct
     newpoints = points.copy()
     newpoints[3] = points[2]
@@ -65,6 +65,24 @@ def format_courtyard_lines(pads,distance_to_pads=0.25,linewidth=0.05):
     
     points = newpoints
     
+    for idx in range(len(points)):
+        for package_point in get_package_points(package_dimensions):
+            for dim in range(2):
+                if points[idx][dim] < 0 and package_point[dim] < 0:
+#                     if package_point[dim] < points[idx][dim]:
+#                         print("point {0} dim {1} package is less".format(idx,dim))#printf testing
+#                         points[idx][dim] = package_point[dim]
+                    points[idx][dim] = min(points[idx][dim],package_point[dim])
+                elif points[idx][dim] > 0 and package_point[dim] > 0:
+#                     if package_point[dim] > points[idx][dim]:
+#                         print("point {0} dim {1} package is greater".format(idx,dim))#printf testing
+#                         points[idx][dim] = package_point[dim]
+                    points[idx][dim] = max(points[idx][dim],package_point[dim])        
+#     
+#     if points != newpoints:
+#         print("courtyard changed by body dimensions")
+#     else:
+#         print("courtyard defined by distance to pads")
     for idx in range(len(points)-1):
         startpoint,endpoint = points[idx:idx+2]
         courtyard_lines.append(format_fpline(startpoint,endpoint,"F.CrtYd",linewidth))
@@ -74,6 +92,14 @@ def format_courtyard_lines(pads,distance_to_pads=0.25,linewidth=0.05):
     return courtyard_lines
 
 
+def get_package_points(package_dimensions):
+    points = []
+    for x in [-0.5,0.5]:
+        for y in [-0.5,0.5]:
+            points.append((x*package_dimensions[0],y*package_dimensions[1]))
+            
+    return points 
+
 def format_fab_lines(package_dimensions,linewidth=0.1):
     """ return the lines (as in newline ) for the fabrication layer (geometrical) lines
         @param package_dimensions: size of the component (x,y)
@@ -82,10 +108,7 @@ def format_fab_lines(package_dimensions,linewidth=0.1):
     fab_lines = []
     # 4 points package rectangle
     
-    points = []    
-    for x in [-0.5,0.5]:
-        for y in [-0.5,0.5]:
-            points.append((x*package_dimensions[0],y*package_dimensions[1])) 
+    points = get_package_points(package_dimensions) 
                     
     bevel = max(0.1,min(package_dimensions)*0.25)
     
@@ -264,7 +287,8 @@ class kicad_footprint:
         subitems.extend(format_fp_text(text="REF**",posxy=refpos,layer="F.SilkS"))
         subitems.extend(format_silks_lines(self.pads))
         
-        subitems.extend(format_courtyard_lines(self.pads))        
+        subitems.extend(format_courtyard_lines(self.pads,package_dimensions=self.package_dimensions))
+#         subitems.extend(format_courtyard_lines(self.pads))#testing        
         subitems.extend([pad.format() for pad in self.pads])
         subitems.extend(format_3dmodel_lines(self.model3dname))
         [items.append("  {0}".format(subitem)) for subitem in subitems]
