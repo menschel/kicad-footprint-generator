@@ -2,6 +2,8 @@
 #purpose:helper function script for kicad footprint generation 
 #author: Patrick Menschel (C)2018
 
+#import re
+
 def format_pad(padnum,padtype,padshape,posx,posy,sizex,sizey,layers):
     ret = "(pad {0} {1} {2} (at {3} {4}) (size {5} {6}) (layers {7}))".format(padnum, padtype, padshape,posx,posy,sizex,sizey," ".join(layers) )
     return ret
@@ -40,7 +42,7 @@ def get_center_dimensions_of_pads(pads):
         maxxy = list(max(maxxy[i],padxypos[i]) for i in range(2))
     return minxy,maxxy
 
-def format_courtyard_lines(pads,distance_to_pads=0.25):
+def format_courtyard_lines(pads,distance_to_pads=0.25,linewidth=0.05):
     points = []
     courtyard_lines = []
     minxy,maxxy = get_outer_dimensions_of_pads(pads)
@@ -65,39 +67,27 @@ def format_courtyard_lines(pads,distance_to_pads=0.25):
     
     for idx in range(len(points)-1):
         startpoint,endpoint = points[idx:idx+2]
-        courtyard_lines.append(format_fpline(startpoint,endpoint,"F.CrtYd",0.05))
+        courtyard_lines.append(format_fpline(startpoint,endpoint,"F.CrtYd",linewidth))
     startpoint = points[-1] 
     endpoint = points[0]
-    courtyard_lines.append(format_fpline(startpoint,endpoint,"F.CrtYd",0.05))
+    courtyard_lines.append(format_fpline(startpoint,endpoint,"F.CrtYd",linewidth))
     return courtyard_lines
 
 
-def format_fab_lines(pads,distance_to_pad_center=0):
-    points = []
+def format_fab_lines(package_dimensions,linewidth=0.1):
+    """ return the lines (as in newline ) for the fabrication layer (geometrical) lines
+        @param package_dimensions: size of the component (x,y)
+        @return: lines for the fabrication layer rectangle with cutted edge as pin 1 indicator
+    """
     fab_lines = []
-    minxy,maxxy = get_center_dimensions_of_pads(pads)
-    spanx,spany = list(zip(minxy,maxxy))
+    # 4 points package rectangle
     
-    for x in spanx:
-        for y in spany:
-            if x < 0:
-                thisx = x-distance_to_pad_center
-            else:
-                thisx = x+distance_to_pad_center
-            if y < 0:
-                thisy = y-distance_to_pad_center
-            else:
-                thisy = y+distance_to_pad_center
-            points.append((thisx,thisy))
-
-    maxx = 0
-    maxy = 0
-    for point in points:
-        maxx = max(abs(point[0]),maxx)
-        maxy = max(abs(point[1]),maxy)
-                
-    #print(sizexy)
-    bevel = min(1,min(maxx,maxy)*0.25)
+    points = []    
+    for x in [-0.5,0.5]:
+        for y in [-0.5,0.5]:
+            points.append((x*package_dimensions[0],y*package_dimensions[1])) 
+                    
+    bevel = max(0.1,min(package_dimensions)*0.25)
     
     #alter first and last point to bevel
     points.append((points[0][0],points[0][1]+bevel))
@@ -112,26 +102,25 @@ def format_fab_lines(pads,distance_to_pad_center=0):
     
     for idx in range(len(points)-1):
         startpoint,endpoint = points[idx:idx+2]
-        fab_lines.append(format_fpline(startpoint,endpoint,"F.Fab",0.1))
+        fab_lines.append(format_fpline(startpoint,endpoint,"F.Fab",linewidth))
     startpoint = points[-1] 
     endpoint = points[0]
-    fab_lines.append(format_fpline(startpoint,endpoint,"F.Fab",0.1))
+    fab_lines.append(format_fpline(startpoint,endpoint,"F.Fab",linewidth))
     return fab_lines
 
 
-def format_silks_lines(pads,distance_to_pads=0.1):
+def format_silks_lines(pads,distance_to_pads=0.2,linewidth=0.12):
     silks_lines = []
-    points = []
     minxy,maxxy = get_outer_dimensions_of_pads(pads)
     cminxy,cmaxxy = get_center_dimensions_of_pads(pads)
     
-    startpoint = minxy[0]-distance_to_pads,minxy[1]-distance_to_pads
+    startpoint = minxy[0]+(linewidth/2),minxy[1]-distance_to_pads
     endpoint = cmaxxy[0],minxy[1]-distance_to_pads
-    silks_lines.append(format_fpline(startpoint,endpoint,"F.SilkS",0.12))
+    silks_lines.append(format_fpline(startpoint,endpoint,"F.SilkS",linewidth))
     
     startpoint = cminxy[0],maxxy[1]+distance_to_pads
     endpoint = cmaxxy[0],maxxy[1]+distance_to_pads
-    silks_lines.append(format_fpline(startpoint,endpoint,"F.SilkS",0.12))
+    silks_lines.append(format_fpline(startpoint,endpoint,"F.SilkS",linewidth))
     return silks_lines
 
 def format_3dmodel_lines(model3dname):
@@ -147,11 +136,11 @@ def format_3dmodel_lines(model3dname):
     
     
 def format_fpline(startpoint,endpoint,layer,width):
-  ret =  "(fp_line (start {0}) (end {1}) (layer {2}) (width {3}))".format(" ".join("{:.2f}".format(dim) for dim in startpoint),
-                                                                          " ".join("{:.2f}".format(dim) for dim in endpoint),
-                                                                          layer,
-                                                                          width)
-  return ret        
+    ret =  "(fp_line (start {0}) (end {1}) (layer {2}) (width {3}))".format(" ".join("{:.2f}".format(dim) for dim in startpoint),
+                                                                            " ".join("{:.2f}".format(dim) for dim in endpoint),
+                                                                            layer,
+                                                                            width)
+    return ret        
 
 
 def format_fp_text(text,posxy,layer,fontsize=(1,1),thickness=0.15,texttype="reference",angle=0):
@@ -167,12 +156,9 @@ def format_fp_text(text,posxy,layer,fontsize=(1,1),thickness=0.15,texttype="refe
     return lines
 
 
-def calc_text_scaline(text,sizexy,charsize=(1,1)):
-    minxy,maxx = sizexy
-    spanxy = list(zip(maxx,minxy))
-    calcxy = list([abs(dim[1])+abs(dim[0]) for dim in spanxy])
+def calc_fab_ref_text_scaling(text,sizexy,charsize=(1,1)):
     textdim = (charsize[0]*len(text),charsize[1])
-    scalingxy = [min(abs(calcxy[I]/textdim[I]),1) for I in range(len(sizexy))] 
+    scalingxy = [min(abs(sizexy[I]/textdim[I]),1) for I in range(len(sizexy))] 
     return scalingxy 
     
 
@@ -220,6 +206,13 @@ class footprint_pad():
                                                                                " ".join("{0:.2f}".format(dim) for dim in self.sizexy),
                                                                                " ".join(self.layers) )
         return ret
+    
+    def get_area(self):
+        if self.padshape == "rect":
+            ret = self.sizexy[0]*self.sizexy[1]
+        else:
+            raise NotImplementedError("Shape not handled yet {0}".format(self.padshape))
+        return ret 
         
         
 
@@ -228,7 +221,7 @@ class footprint_pad():
 class kicad_footprint:
     
      
-    def __init__(self,name,desc,datasheet,pads,tedit="5AA01C76",layers=["F.Cu",],tags=["VDN",],attr=["smd",],model3dname="Package_DFN_QFN.3dshapes/DFN-14-1EP_3x4.5mm_P0.65mm.wrl"):
+    def __init__(self,name,desc,datasheet,pads,tedit="5AA01C76",layers=["F.Cu",],tags=["VDN",],attr=["smd",],model3dname="Package_DFN_QFN.3dshapes/DFN-14-1EP_3x4.5mm_P0.65mm.wrl",package_dimensions=(1,1)):
         self.name = name
         self.desc = desc
         self.datasheet = datasheet
@@ -238,27 +231,31 @@ class kicad_footprint:
         self.tags = tags
         self.attr = attr
         self.model3dname=model3dname
+        self.package_dimensions = package_dimensions
+        #self.pitch = re.compile("_P.*mm").findall(self.name)[0]#TODO: should we noc generate the name instead of RE the pitch out of it?!
         
     def format(self):
+        fabrication_layer_value_distance_to_pads = 1#TODO: STUB - automate / calculate this value
         items = []#list of items to be placed in the format string
         items.append("module {0} (layer {1}) (tedit {2})".format(self.name," ".join(self.layers),self.tedit))#module definition line
         subitems = []
         subitems.append("(descr \"{0} ({1})\")".format(self.desc,self.datasheet))
         subitems.append("(tags \"{0}\")".format(" ".join(self.tags)))
         subitems.append("(attr {0})".format(" ".join(self.attr)))
-        subitems.extend(format_fab_lines(self.pads))
         
         #Fab layer
-        minxy,maxxy = get_outer_dimensions_of_pads(self.pads)
-        distance_to_pads = 1#TODO: write a function that returns the required distance to the pads
-        refpos = (0,maxxy[1]+distance_to_pads)
-        subitems.extend(format_fp_text(text=self.name,posxy=refpos,layer="F.Fab",texttype="value"))#why is this name not showing ?
-        scaling = calc_text_scaline(text="REF**",sizexy=get_center_dimensions_of_pads(self.pads))#actually we're calculating %R but it translates to REF**
+        subitems.extend(format_fab_lines(package_dimensions=self.package_dimensions))        
+        maxxy = get_outer_dimensions_of_pads(self.pads)[1]
+        refpos = (0,maxxy[1]+fabrication_layer_value_distance_to_pads)
+        subitems.extend(format_fp_text(text=self.name,posxy=refpos,layer="F.Fab",texttype="value"))
+        #scaling = calc_text_scaling(text="REF**",sizexy=get_center_dimensions_of_pads(self.pads))#actually we're calculating %R but it translates to REF**
+        scaling = calc_fab_ref_text_scaling(text="REF**",sizexy=self.package_dimensions)
         angle=0
         if scaling[1] < scaling[0]:
-            angle=90
-        fontsize=(min(scaling),)*2
-        subitems.extend(format_fp_text(text="%R",posxy=(0,0),layer="F.Fab",texttype="user",fontsize=fontsize,angle=angle))
+            angle=90#use 90deg angle if the y dim is bigger than x, so we have more space
+        fontsize=(min(scaling),)*2#keep aspect ratio
+        thickness = 0.15*(self.package_dimensions[1]/self.package_dimensions[0])
+        subitems.extend(format_fp_text(text="%R",posxy=(0,0),layer="F.Fab",texttype="user",fontsize=fontsize,angle=angle,thickness=thickness))
         
         #SilkS layer
         minxy,maxxy = get_outer_dimensions_of_pads(self.pads)
@@ -276,7 +273,7 @@ class kicad_footprint:
     
     
     
-def make_footprint_stmicro(N,E,X2,Y2,C,X,Y,V,EV,modulename,description,datasheet,centerpad,numthermalvias):
+def make_footprint_stmicro(N,E,X2,Y2,C,X,Y,V,EV,modulename,description,datasheet,centerpad,numthermalvias,package_dimensions):
     """ make a kicad footprint from a st micro footprint description
         @param N: number of terminals(pads) in this footprint
         @param E: contact pitch
@@ -309,7 +306,7 @@ def make_footprint_stmicro(N,E,X2,Y2,C,X,Y,V,EV,modulename,description,datasheet
         pads.append(ep)
 
     if numthermalvias and V and EV:
-        #TODO: either calculate the number of thermal vias
+        #TODO: calculate the number of thermal vias
         for padnum,xypos in enumerate(get_posxy_for_span(pinnum=numthermalvias,spanx=EV,spany=EV)):#TODO: how do we know the Number of thermalvias from spec sheet variables? 
             
             #add the thermal via
@@ -319,11 +316,10 @@ def make_footprint_stmicro(N,E,X2,Y2,C,X,Y,V,EV,modulename,description,datasheet
                         sizexy=(diameter,)*2,
                         padtype="thru_hole", padshape="circle",layers=["*.Cu","*.Mask"],drill=V))
             
-            #add the thermal pad to the back
-            thermalvia_pads.append(footprint_pad(N+1,
-                        xypos=(xypos[1],xypos[0]),
-                        sizexy=(diameter,)*2,
-                        padtype="smd", padshape="rect",layers = ["B.Cu","B.Mask"]))#TODO: does this need to be rectangle?!
+        thermalvia_pads.append(footprint_pad(N+1,#FIXUP: one big thermal pad on the back.
+                               xypos=(0,0),
+                               sizexy=(Y2,X2),
+                               padtype="smd", padshape="rect",layers = ["B.Cu",]))
         
         
         #shape the paste fields on the center pad around the thermalvias
@@ -334,7 +330,7 @@ def make_footprint_stmicro(N,E,X2,Y2,C,X,Y,V,EV,modulename,description,datasheet
         paste_pads.append(footprint_pad(
                           None,#No pad number
                           xypos=(0,0),
-                          sizexy=(Y2,EV-diameter),
+                          sizexy=(Y2,EV-V),#FIXME:not the diameter but the drill+margin, what is the margin?
                           padtype="smd",
                           padshape="rect",
                           layers = ["F.Paste",]))
@@ -343,24 +339,30 @@ def make_footprint_stmicro(N,E,X2,Y2,C,X,Y,V,EV,modulename,description,datasheet
             paste_pads.append(footprint_pad(
                               None,#No pad number
                               xypos=xypos,#position is in between the vias
-                              sizexy=(EV-diameter,X2-EV),
+                              sizexy=(EV-V,X2-EV),
                               padtype="smd",
                               padshape="rect",
                               layers = ["F.Paste",]))
             
-        
+        paste_coverage = sum([paste_pad.get_area() for paste_pad in paste_pads])/ep.get_area()
+        print("paste coverage {0:%}".format(paste_coverage))
     else:
         pass
-        #shape the paste fields on the center pad
+        #shape the paste fields on the center pad without thermal vias
+        
+        
+        
     pads.extend(thermalvia_pads)
     pads.extend(paste_pads)    
     
-    fp_obj = kicad_footprint(name=modulename,desc=description,datasheet=datasheet,pads=pads,tags=["VDFN","DFN","0.65mm"],
-                             model3dname="Package_DFN_QFN.3dshapes/{0}.wrl".format(modulename))    
+    fp_obj = kicad_footprint(name=modulename,desc=description,datasheet=datasheet,pads=pads,tags=["VDFN","DFN","{0}mm".format(E)],
+                             model3dname="Package_DFN_QFN.3dshapes/{0}.wrl".format(modulename),
+                             package_dimensions=package_dimensions)    
     return fp_obj.format()
         
 
 if __name__ == "__main__":
+    modulename = "TDFN-8-1EP_3x2mm_P0.5mm_EP1.80x1.65mm_ThermalVias"
     footprint = make_footprint_stmicro(N=8,
                                        E=0.5,
                                        X2=1.65,
@@ -370,13 +372,14 @@ if __name__ == "__main__":
                                        Y=0.85,
                                        V=0.3,
                                        EV=1.0,
-                                       modulename="TDFN-8-1EP_3x2mm_Pitch0.5mm_EP1.80x1.65mm",
+                                       modulename=modulename,
                                        description="8-lead plastic dual flat, 2x3x0.75mm size, 0.5mm pitch",
                                        datasheet="http://ww1.microchip.com/downloads/en/DeviceDoc/8L_TDFN_2x3_MN_C04-0129E-MN.pdf",
                                        centerpad=True,
                                        numthermalvias=4,
+                                       package_dimensions=(3,2),#swapped again portrait vs landscape
                                        )
-    with open("TDFN-8-1EP_3x2mm_Pitch0.5mm_EP1.80x1.65mm_ThermalVias.kicad_mod","w") as f:
+    with open("{0}.kicad_mod".format(modulename),"w") as f:
         f.write(footprint)
 
 
